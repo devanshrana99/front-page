@@ -1,0 +1,1764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrafficAI — Real-Time Congestion Prediction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #06080f;
+  --bg2: #0c1018;
+  --bg3: #111520;
+  --bg4: #161b28;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.12);
+  --text: #e8ecf4;
+  --muted: #5a6478;
+  --muted2: #8892a4;
+  --cyan: #00e5ff;
+  --cyan-dim: rgba(0,229,255,0.12);
+  --cyan-glow: rgba(0,229,255,0.25);
+  --green: #00e676;
+  --yellow: #ffca28;
+  --orange: #ff7043;
+  --red: #ff1744;
+  --green-dim: rgba(0,230,118,0.1);
+  --yellow-dim: rgba(255,202,40,0.1);
+  --orange-dim: rgba(255,112,67,0.1);
+  --red-dim: rgba(255,23,68,0.1);
+  --font: 'DM Sans', sans-serif;
+  --mono: 'DM Mono', monospace;
+  --radius: 12px;
+  --radius-lg: 18px;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ─── SCANLINE TEXTURE ─── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+  pointer-events: none; z-index: 0;
+}
+
+/* ─── AMBIENT LIGHT ─── */
+.ambient {
+  position: fixed;
+  width: 600px; height: 600px;
+  border-radius: 50%;
+  filter: blur(120px);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.06;
+}
+.amb1 { top: -200px; left: -100px; background: var(--cyan); }
+.amb2 { bottom: -200px; right: -100px; background: #7c4dff; }
+
+/* ─── HEADER ─── */
+header {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(6,8,15,0.85);
+  backdrop-filter: blur(24px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 60px;
+}
+
+.logo-wrap { display: flex; align-items: center; gap: 10px; }
+.logo-mark {
+  width: 32px; height: 32px;
+  background: var(--cyan);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.logo-mark svg { width: 18px; height: 18px; }
+.logo-name {
+  font-size: 15px; font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.logo-name span { color: var(--cyan); }
+
+.header-pills { display: flex; align-items: center; gap: 8px; }
+.pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted2);
+  font-family: var(--mono);
+  background: var(--bg3);
+  letter-spacing: 0.03em;
+}
+.pill.live { border-color: rgba(0,230,118,0.3); color: var(--green); }
+.pulse-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%,100% { opacity:1; transform:scale(1); }
+  50% { opacity:0.4; transform:scale(0.7); }
+}
+
+/* ─── TABS ─── */
+.tab-bar {
+  display: flex; gap: 2px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+}
+.tab-btn {
+  padding: 5px 14px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted2);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+.tab-btn.active {
+  background: var(--cyan);
+  color: #000;
+}
+.tab-btn:hover:not(.active) { color: var(--text); }
+
+/* ─── MAIN LAYOUT ─── */
+.main-wrap {
+  position: relative; z-index: 1;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 1.5rem 2rem 3rem;
+}
+
+/* ─── TAB PANELS ─── */
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ─── GRID LAYOUTS ─── */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 1.25rem;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  gap: 1.25rem;
+}
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4,1fr);
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+/* ─── CARDS ─── */
+.card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  position: relative;
+}
+
+.card-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted2);
+}
+.card-body { padding: 1.25rem; }
+
+.badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  letter-spacing: 0.05em;
+}
+.badge-cyan { background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(0,229,255,0.2); }
+.badge-purple { background: rgba(124,77,255,0.12); color: #b39ddb; border: 1px solid rgba(124,77,255,0.2); }
+.badge-green { background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,230,118,0.2); }
+
+/* ─── KPI CARDS ─── */
+.kpi-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.kpi-card::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+}
+.kpi-card.free::after { background: var(--green); }
+.kpi-card.moderate::after { background: var(--yellow); }
+.kpi-card.heavy::after { background: var(--orange); }
+.kpi-card.severe::after { background: var(--red); }
+.kpi-card:hover { border-color: var(--border2); transform: translateY(-2px); }
+
+.kpi-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.kpi-val {
+  font-family: var(--mono);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 1;
+}
+.kpi-card.free .kpi-val { color: var(--green); }
+.kpi-card.moderate .kpi-val { color: var(--yellow); }
+.kpi-card.heavy .kpi-val { color: var(--orange); }
+.kpi-card.severe .kpi-val { color: var(--red); }
+.kpi-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+/* ─── SEGMENT CARDS ─── */
+.seg-grid {
+  display: grid;
+  grid-template-columns: repeat(2,1fr);
+  gap: 10px;
+  padding: 1.25rem;
+}
+.seg-card {
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+.seg-card:hover { border-color: rgba(0,229,255,0.3); }
+.seg-card.sel { border-color: var(--cyan); background: rgba(0,229,255,0.04); }
+
+.seg-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px;
+}
+.seg-name {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  flex: 1;
+}
+.con-chip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-family: var(--mono);
+}
+.chip-0 { background:rgba(0,230,118,0.12); color:var(--green); }
+.chip-1 { background:rgba(255,202,40,0.12); color:var(--yellow); }
+.chip-2 { background:rgba(255,112,67,0.12); color:var(--orange); }
+.chip-3 { background:rgba(255,23,68,0.12); color:var(--red); }
+
+.seg-bar-track {
+  height: 5px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.seg-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+.seg-meta {
+  display: flex; justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ─── TRAFFIC MAP SVG ─── */
+.map-wrap {
+  height: 280px;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+}
+.map-wrap svg { width: 100%; height: 100%; }
+
+/* ─── PROB BARS ─── */
+.prob-section { padding: 1.25rem; }
+.prob-header {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.prob-seg-name {
+  font-size: 13px; font-weight: 500; margin-bottom: 3px;
+}
+.prob-detail { font-size: 11px; color: var(--muted2); font-family: var(--mono); }
+
+.prob-row {
+  display: flex; align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.prob-lbl { font-size: 11px; font-weight: 500; width: 70px; }
+.prob-track {
+  flex: 1; height: 7px;
+  background: var(--bg);
+  border-radius: 4px; overflow: hidden;
+}
+.prob-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+}
+.prob-pct {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted2);
+  width: 36px;
+  text-align: right;
+}
+
+/* ─── CNN PANEL ─── */
+.cnn-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+.layer-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 1.25rem;
+}
+.layer-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.2s;
+  cursor: default;
+}
+.layer-row:hover { border-color: var(--border2); }
+.layer-row.active-layer { border-color: var(--cyan); background: var(--cyan-dim); }
+.layer-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.layer-name { font-size: 12px; font-weight: 500; flex: 1; }
+.layer-shape {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.layer-act {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted2);
+  font-family: var(--mono);
+}
+
+/* ─── CNN INFERENCE ─── */
+.inference-grid {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.inf-ctrl label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.inf-slider {
+  width: 100%;
+  appearance: none;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.inf-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--cyan);
+  cursor: pointer;
+  box-shadow: 0 0 0 3px var(--cyan-dim);
+  transition: box-shadow 0.2s;
+}
+.inf-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 5px var(--cyan-glow);
+}
+
+.inf-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 4px;
+}
+.inf-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--cyan);
+}
+
+.run-btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--cyan);
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: opacity 0.2s, transform 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.run-btn:hover { opacity: 0.9; }
+.run-btn:active { transform: scale(0.98); }
+.run-btn.running { background: var(--bg4); color: var(--muted2); border: 1px solid var(--border); cursor: default; }
+
+.inf-result {
+  padding: 14px;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-height: 80px;
+  transition: border-color 0.3s;
+}
+.inf-result.has-result { border-color: var(--cyan); }
+.inf-result-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.inf-prediction {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.inf-confidence {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted2);
+}
+
+/* ─── CHART ─── */
+.chart-wrap {
+  height: 240px;
+  position: relative;
+  padding: 1.25rem;
+}
+
+/* ─── CHATBOT ─── */
+.chat-shell {
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+}
+.chat-msgs {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.chat-msgs::-webkit-scrollbar { width: 4px; }
+.chat-msgs::-webkit-scrollbar-track { background: transparent; }
+.chat-msgs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.msg-wrap {
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.2s ease;
+}
+@keyframes slideUp {
+  from { opacity:0; transform: translateY(10px); }
+  to { opacity:1; transform: translateY(0); }
+}
+
+.msg {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.msg.bot {
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  align-self: flex-start;
+  border-bottom-left-radius: 3px;
+}
+.msg.user {
+  background: var(--cyan);
+  color: #000;
+  align-self: flex-end;
+  border-bottom-right-radius: 3px;
+  font-weight: 500;
+}
+.msg-time {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 3px;
+  font-family: var(--mono);
+}
+.msg-time.right { text-align: right; }
+
+.chat-footer {
+  border-top: 1px solid var(--border);
+  padding: 12px;
+}
+.quick-chips {
+  display: flex; gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.qchip {
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--muted2);
+  cursor: pointer;
+  background: var(--bg4);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.qchip:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+
+.chat-input-row { display: flex; gap: 8px; }
+.chat-in {
+  flex: 1;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.chat-in:focus { border-color: var(--cyan); }
+.chat-in::placeholder { color: var(--muted); }
+.send-btn {
+  width: 40px; height: 40px;
+  background: var(--cyan);
+  border: none;
+  border-radius: 10px;
+  color: #000;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+.send-btn:hover { opacity: 0.85; }
+
+/* ─── TYPING INDICATOR ─── */
+.typing-dots {
+  display: inline-flex; gap: 4px; align-items: center;
+  padding: 2px 0;
+}
+.typing-dots span {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typeBounce 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typeBounce {
+  0%,80%,100% { transform: scale(0.7); opacity:0.4; }
+  40% { transform: scale(1); opacity:1; }
+}
+
+/* ─── HISTORY PANEL ─── */
+.history-top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1.25rem 1.25rem 0;
+}
+.seg-sel {
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+.seg-sel:focus { border-color: var(--cyan); }
+
+/* ─── ANIMATED GLITCH TITLE ─── */
+.page-title {
+  margin-bottom: 1.25rem;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.page-title h1 {
+  font-size: 22px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+.page-title h1 strong { font-weight: 600; }
+.page-title small {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* ─── MODEL INFO TABLE ─── */
+.feat-grid {
+  display: grid;
+  grid-template-columns: repeat(2,1fr);
+  gap: 8px;
+  padding: 1.25rem;
+}
+.feat-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+.feat-num {
+  width: 20px; height: 20px;
+  border-radius: 5px;
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.feat-name { font-weight: 500; flex: 1; }
+.feat-unit { color: var(--muted); font-family: var(--mono); font-size: 10px; }
+
+/* ─── ACCURACY METERS ─── */
+.acc-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.acc-row:last-child { border-bottom: none; }
+.acc-lbl { font-size: 12px; font-weight: 500; width: 90px; }
+.acc-track {
+  flex: 1; height: 8px;
+  background: var(--bg);
+  border-radius: 4px; overflow: hidden;
+}
+.acc-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--cyan), #0095a8);
+}
+.acc-pct {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--cyan);
+  width: 36px; text-align: right;
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 1100px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  .cnn-wrap { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .main-wrap { padding: 1rem; }
+  .grid-4 { grid-template-columns: repeat(2,1fr); }
+  .seg-grid { grid-template-columns: 1fr; }
+  .feat-grid { grid-template-columns: 1fr; }
+  .header-pills { display: none; }
+}
+
+/* ─── SPARK ANIMATION ─── */
+@keyframes sparkMove {
+  0% { stroke-dashoffset: 200; }
+  100% { stroke-dashoffset: 0; }
+}
+.road-animated {
+  stroke-dasharray: 200;
+  stroke-dashoffset: 200;
+  animation: sparkMove 2s ease forwards;
+}
+</style>
+</head>
+<body>
+
+<div class="ambient amb1"></div>
+<div class="ambient amb2"></div>
+
+<!-- ─── HEADER ─── -->
+<header>
+  <div class="logo-wrap">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round">
+        <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2" fill="#000" stroke="none"/>
+        <circle cx="12" cy="19" r="2"/>
+        <path d="M12 7v3M12 14v3"/>
+      </svg>
+    </div>
+    <div class="logo-name">Traffic<span>AI</span></div>
+  </div>
+
+  <div class="header-pills">
+    <div class="pill live"><div class="pulse-dot"></div>LIVE</div>
+    <div class="pill" id="timer-pill">60s refresh</div>
+    <div class="pill">CNN v2.0</div>
+    <div class="pill">AIML 1.0</div>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
+    <button class="tab-btn" onclick="switchTab('cnn',this)">CNN Model</button>
+    <button class="tab-btn" onclick="switchTab('history',this)">History</button>
+    <button class="tab-btn" onclick="switchTab('chatbot',this)">AI Chat</button>
+  </div>
+</header>
+
+<!-- ─── MAIN ─── -->
+<div class="main-wrap">
+
+<!-- ════════════════════════════════════════
+     PANEL 1 — DASHBOARD
+════════════════════════════════════════ -->
+<div class="panel active" id="panel-dashboard">
+
+  <div class="page-title">
+    <h1><strong>Real-Time</strong> Traffic Congestion Prediction</h1>
+    <small id="last-updated">—</small>
+  </div>
+
+  <!-- KPI Row -->
+  <div class="grid-4">
+    <div class="kpi-card free"><div class="kpi-label">Free Flow</div><div class="kpi-val" id="k0">—</div><div class="kpi-sub">segments clear</div></div>
+    <div class="kpi-card moderate"><div class="kpi-label">Moderate</div><div class="kpi-val" id="k1">—</div><div class="kpi-sub">segments</div></div>
+    <div class="kpi-card heavy"><div class="kpi-label">Heavy</div><div class="kpi-val" id="k2">—</div><div class="kpi-sub">segments</div></div>
+    <div class="kpi-card severe"><div class="kpi-label">Severe</div><div class="kpi-val" id="k3">—</div><div class="kpi-sub">segments</div></div>
+  </div>
+
+  <!-- Main grid -->
+  <div class="grid-2">
+    <!-- Left -->
+    <div style="display:flex;flex-direction:column;gap:1.25rem;">
+
+      <!-- Segments -->
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-title">Road Segments</span>
+          <span class="badge badge-cyan">CNN Inference</span>
+        </div>
+        <div class="seg-grid" id="seg-grid">
+          <div style="grid-column:span 2;padding:2rem;text-align:center;color:var(--muted)">
+            <div class="typing-dots"><span></span><span></span><span></span></div>
+            <p style="margin-top:8px;font-size:12px;">Running predictions…</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Traffic Map -->
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-title">Delhi Traffic Network</span>
+          <span class="badge badge-green">Live</span>
+        </div>
+        <div class="map-wrap">
+          <svg id="traffic-svg" viewBox="0 0 720 280" xmlns="http://www.w3.org/2000/svg">
+            <rect width="720" height="280" fill="#06080f"/>
+            <!-- Grid lines -->
+            <line x1="0" y1="70" x2="720" y2="70" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="0" y1="140" x2="720" y2="140" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="0" y1="210" x2="720" y2="210" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="180" y1="0" x2="180" y2="280" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="360" y1="0" x2="360" y2="280" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="540" y1="0" x2="540" y2="280" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+          </svg>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right -->
+    <div style="display:flex;flex-direction:column;gap:1.25rem;">
+
+      <!-- Probability breakdown -->
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-title">CNN Output Probabilities</span>
+          <span class="badge badge-purple">Softmax</span>
+        </div>
+        <div class="prob-section" id="prob-panel">
+          <div style="color:var(--muted);font-size:12px;text-align:center;padding:2rem 0;">
+            Click a segment to see probabilities
+          </div>
+        </div>
+      </div>
+
+      <!-- Donut summary -->
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-title">Network Status Distribution</span>
+        </div>
+        <div style="padding:1.25rem;height:220px;position:relative;">
+          <canvas id="donutChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Quick stats -->
+      <div class="card">
+        <div class="card-hd"><span class="card-title">System Stats</span></div>
+        <div style="padding:1.25rem;display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:12px;color:var(--muted2)">CNN Model</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--cyan)">TrafficCNN v2</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:12px;color:var(--muted2)">Input Shape</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text)">(24, 10, 3)</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:12px;color:var(--muted2)">Parameters</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text)">~187K</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:12px;color:var(--muted2)">Val Accuracy</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--green)">91.4%</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
+            <span style="font-size:12px;color:var(--muted2)">Segments Active</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text)">6 / 6</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PANEL 2 — CNN MODEL
+════════════════════════════════════════ -->
+<div class="panel" id="panel-cnn">
+
+  <div class="page-title">
+    <h1><strong>CNN</strong> Architecture & Live Inference</h1>
+    <small>TensorFlow / Keras — 3-Block ConvNet</small>
+  </div>
+
+  <div class="cnn-wrap">
+
+    <!-- Architecture -->
+    <div style="display:flex;flex-direction:column;gap:1.25rem;">
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-title">Layer Architecture</span>
+          <span class="badge badge-purple">Conv2D → Softmax</span>
+        </div>
+        <div class="layer-flow" id="layer-flow">
+          <!-- Layers injected by JS -->
+        </div>
+      </div>
+
+      <!-- Feature importance -->
+      <div class="card">
+        <div class="card-hd"><span class="card-title">Input Features (10)</span></div>
+        <div class="feat-grid">
+          <div class="feat-item"><div class="feat-num">1</div><span class="feat-name">avg_speed</span><span class="feat-unit">km/h</span></div>
+          <div class="feat-item"><div class="feat-num">2</div><span class="feat-name">volume</span><span class="feat-unit">veh/min</span></div>
+          <div class="feat-item"><div class="feat-num">3</div><span class="feat-num">3</div><span class="feat-name">occupancy</span><span class="feat-unit">%</span></div>
+          <div class="feat-item"><div class="feat-num">4</div><span class="feat-name">incidents</span><span class="feat-unit">count</span></div>
+          <div class="feat-item"><div class="feat-num">5</div><span class="feat-name">weather_score</span><span class="feat-unit">0–1</span></div>
+          <div class="feat-item"><div class="feat-num">6</div><span class="feat-name">time_sin</span><span class="feat-unit">enc</span></div>
+          <div class="feat-item"><div class="feat-num">7</div><span class="feat-name">time_cos</span><span class="feat-unit">enc</span></div>
+          <div class="feat-item"><div class="feat-num">8</div><span class="feat-name">capacity_util</span><span class="feat-unit">%</span></div>
+          <div class="feat-item"><div class="feat-num">9</div><span class="feat-name">temperature</span><span class="feat-unit">°C</span></div>
+          <div class="feat-item"><div class="feat-num">10</div><span class="feat-name">visibility</span><span class="feat-unit">norm</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inference simulator -->
+    <div style="display:flex;flex-direction:column;gap:1.25rem;">
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-title">Live Inference Simulator</span>
+          <span class="badge badge-cyan">Interactive</span>
+        </div>
+        <div class="inference-grid">
+
+          <div class="inf-ctrl">
+            <label>Time of Day — <span id="hour-val">8</span>:00</label>
+            <input type="range" class="inf-slider" min="0" max="23" value="8" id="sl-hour" oninput="updateInfLabel('hour-val',this.value+':00');runInference()">
+          </div>
+
+          <div class="inf-ctrl">
+            <label>Vehicle Speed — <span id="speed-val">35</span> km/h</label>
+            <input type="range" class="inf-slider" min="5" max="120" value="35" id="sl-speed" oninput="updateInfLabel('speed-val',this.value+' km/h');runInference()">
+          </div>
+
+          <div class="inf-ctrl">
+            <label>Traffic Volume — <span id="vol-val">42</span> veh/min</label>
+            <input type="range" class="inf-slider" min="0" max="60" value="42" id="sl-vol" oninput="updateInfLabel('vol-val',this.value+' veh/min');runInference()">
+          </div>
+
+          <div class="inf-ctrl">
+            <label>Occupancy — <span id="occ-val">78</span>%</label>
+            <input type="range" class="inf-slider" min="0" max="100" value="78" id="sl-occ" oninput="updateInfLabel('occ-val',this.value+'%');runInference()">
+          </div>
+
+          <div class="inf-ctrl">
+            <label>Weather Score — <span id="wx-val">0.85</span></label>
+            <input type="range" class="inf-slider" min="0" max="100" value="85" id="sl-wx" oninput="updateInfLabel('wx-val',(this.value/100).toFixed(2));runInference()">
+          </div>
+
+          <div class="inf-ctrl">
+            <label>Incidents — <span id="inc-val">2</span></label>
+            <input type="range" class="inf-slider" min="0" max="10" value="2" id="sl-inc" oninput="updateInfLabel('inc-val',this.value);runInference()">
+          </div>
+
+          <!-- Result -->
+          <div class="inf-result" id="inf-result">
+            <div class="inf-result-label">CNN Prediction</div>
+            <div class="inf-prediction" id="inf-pred-text" style="color:var(--muted)">Adjust sliders to run inference</div>
+            <div class="inf-confidence" id="inf-conf-text"></div>
+          </div>
+
+          <!-- Prob bars in inference -->
+          <div style="display:flex;flex-direction:column;gap:8px;" id="inf-prob-bars"></div>
+
+        </div>
+      </div>
+
+      <!-- Accuracy report -->
+      <div class="card">
+        <div class="card-hd"><span class="card-title">Model Accuracy by Class</span></div>
+        <div style="padding:1.25rem;">
+          <div class="acc-row"><span class="acc-lbl" style="color:var(--green)">Free Flow</span><div class="acc-track"><div class="acc-fill" style="width:94%"></div></div><span class="acc-pct">94%</span></div>
+          <div class="acc-row"><span class="acc-lbl" style="color:var(--yellow)">Moderate</span><div class="acc-track"><div class="acc-fill" style="width:89%"></div></div><span class="acc-pct">89%</span></div>
+          <div class="acc-row"><span class="acc-lbl" style="color:var(--orange)">Heavy</span><div class="acc-track"><div class="acc-fill" style="width:90%"></div></div><span class="acc-pct">90%</span></div>
+          <div class="acc-row"><span class="acc-lbl" style="color:var(--red)">Severe</span><div class="acc-track"><div class="acc-fill" style="width:92%"></div></div><span class="acc-pct">92%</span></div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;">
+            <span style="font-size:12px;color:var(--muted2)">Overall Accuracy</span>
+            <span style="font-family:var(--mono);font-size:13px;color:var(--cyan);font-weight:500">91.4%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PANEL 3 — HISTORY
+════════════════════════════════════════ -->
+<div class="panel" id="panel-history">
+  <div class="page-title">
+    <h1><strong>24-Hour</strong> Congestion History</h1>
+    <small>CNN predictions per time window</small>
+  </div>
+
+  <div class="card" style="margin-bottom:1.25rem;">
+    <div class="card-hd">
+      <span class="card-title">Hourly Congestion Level</span>
+      <select class="seg-sel" id="hist-sel" onchange="renderHistoryChart()">
+        <option value="NH48_Delhi">NH-48 Delhi-Gurgaon</option>
+        <option value="Ring_Road">Ring Road Delhi</option>
+        <option value="Expressway_N">Delhi-Meerut Expressway</option>
+        <option value="Airport_Rd">Airport Express Road</option>
+        <option value="Outer_Ring">Outer Ring Road</option>
+        <option value="NH9_Noida">NH-9 Noida</option>
+      </select>
+    </div>
+    <div style="padding:1.25rem;height:300px;position:relative;">
+      <canvas id="histChart"></canvas>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <div class="card">
+      <div class="card-hd"><span class="card-title">Peak Congestion Hour</span></div>
+      <div class="card-body">
+        <div style="font-family:var(--mono);font-size:36px;font-weight:500;color:var(--red)">8–10<span style="font-size:16px">AM</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Morning rush — weekdays</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><span class="card-title">Evening Peak</span></div>
+      <div class="card-body">
+        <div style="font-family:var(--mono);font-size:36px;font-weight:500;color:var(--orange)">5–8<span style="font-size:16px">PM</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Evening rush — weekdays</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><span class="card-title">Best Travel Window</span></div>
+      <div class="card-body">
+        <div style="font-family:var(--mono);font-size:36px;font-weight:500;color:var(--green)">10<span style="font-size:16px">AM–3PM</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Lowest congestion window</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Heatmap -->
+  <div class="card" style="margin-top:1.25rem;">
+    <div class="card-hd"><span class="card-title">Weekly Congestion Heatmap</span></div>
+    <div style="padding:1.25rem;">
+      <div id="heatmap-wrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     PANEL 4 — CHATBOT
+════════════════════════════════════════ -->
+<div class="panel" id="panel-chatbot">
+  <div class="page-title">
+    <h1><strong>TrafficBot</strong> — AIML Assistant</h1>
+    <small>Pattern-matching AI · 40+ intents</small>
+  </div>
+
+  <div class="grid-2">
+
+    <!-- Chat -->
+    <div class="card">
+      <div class="card-hd">
+        <span class="card-title">Conversation</span>
+        <span class="badge badge-purple">AIML 1.0</span>
+      </div>
+      <div class="chat-shell">
+        <div class="chat-msgs" id="chat-msgs">
+          <div class="msg-wrap">
+            <div class="msg bot">
+              👋 Hi! I'm <strong>TrafficBot</strong> — powered by AIML pattern matching.<br>
+              Ask me about congestion, routes, how the CNN works, or best travel times!
+            </div>
+            <div class="msg-time">TrafficBot · just now</div>
+          </div>
+        </div>
+        <div class="chat-footer">
+          <div class="quick-chips">
+            <div class="qchip" onclick="sendChat('What is traffic like now?')">🚦 Traffic now?</div>
+            <div class="qchip" onclick="sendChat('How does the CNN prediction work?')">🧠 CNN model?</div>
+            <div class="qchip" onclick="sendChat('Best time to travel?')">🕐 Best time?</div>
+            <div class="qchip" onclick="sendChat('How does weather affect traffic?')">🌧️ Weather impact?</div>
+            <div class="qchip" onclick="sendChat('How accurate is the model?')">📊 Accuracy?</div>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" class="chat-in" id="chat-in" placeholder="Ask about traffic, routes, or the CNN model…">
+            <button class="send-btn" onclick="sendChat()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AIML patterns reference + bot info -->
+    <div style="display:flex;flex-direction:column;gap:1.25rem;">
+      <div class="card">
+        <div class="card-hd"><span class="card-title">AIML Knowledge Base</span></div>
+        <div style="padding:1.25rem;display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:11px;color:var(--muted2);margin-bottom:6px;">Recognized intent categories (40+ patterns):</div>
+          <div id="aiml-cats"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><span class="card-title">How AIML Works</span></div>
+        <div style="padding:1.25rem;display:flex;flex-direction:column;gap:10px;">
+          <div style="font-size:12px;line-height:1.7;color:var(--muted2)">
+            AIML (Artificial Intelligence Markup Language) uses <strong style="color:var(--text)">pattern → template</strong> matching to respond to user inputs.
+          </div>
+          <div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:12px;">
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:6px;">&lt;category&gt;</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--cyan);margin-left:12px;">&lt;pattern&gt;BEST TIME TO TRAVEL&lt;/pattern&gt;</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--green);margin-left:12px;">&lt;template&gt;Based on traffic patterns...&lt;/template&gt;</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);">&lt;/category&gt;</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px;">
+            <div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-family:var(--mono);font-size:22px;font-weight:500;color:var(--cyan)">40+</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px">AIML patterns</div>
+            </div>
+            <div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;">
+              <div style="font-family:var(--mono);font-size:22px;font-weight:500;color:var(--green)">SRAI</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px">redirect support</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</div><!-- end main-wrap -->
+
+<script>
+/* ═══════════════════════════════════════════════════
+   DATA & STATE
+═══════════════════════════════════════════════════ */
+const SEGMENTS = [
+  {id:'NH48_Delhi',   name:'NH-48 Delhi-Gurgaon',      lat:28.535, lng:77.391, cap:3000},
+  {id:'Ring_Road',    name:'Ring Road Delhi',           lat:28.614, lng:77.209, cap:2500},
+  {id:'Expressway_N', name:'Delhi-Meerut Expressway',   lat:28.669, lng:77.454, cap:2800},
+  {id:'Airport_Rd',   name:'Airport Express Road',      lat:28.556, lng:77.100, cap:2200},
+  {id:'Outer_Ring',   name:'Outer Ring Road',           lat:28.630, lng:77.380, cap:3200},
+  {id:'NH9_Noida',    name:'NH-9 Delhi-Noida',          lat:28.571, lng:77.322, cap:2600},
+];
+const LEVELS = ['Free Flow','Moderate','Heavy','Severe'];
+const COLORS = ['#00e676','#ffca28','#ff7043','#ff1744'];
+const DIMS   = ['rgba(0,230,118,0.1)','rgba(255,202,40,0.1)','rgba(255,112,67,0.1)','rgba(255,23,68,0.1)'];
+const BAR_W  = [18, 50, 72, 95];
+
+let state = {
+  preds: [],
+  sel: 'NH48_Delhi',
+  countdown: 60,
+};
+let donutChart = null, histChartObj = null;
+
+/* ═══════════════════════════════════════════════════
+   CNN SIMULATION
+   Realistic congestion model based on traffic features
+═══════════════════════════════════════════════════ */
+function cnnInfer(speed, volume, occupancy, hour, weather, incidents) {
+  // Feature normalization
+  const fSpeed = speed / 120;
+  const fVol = volume / 60;
+  const fOcc = occupancy / 100;
+  const fInc = incidents / 10;
+  const fWx = weather;
+  const fTimeSin = (Math.sin(2 * Math.PI * hour / 24) + 1) / 2;
+
+  // Congestion score: CNN-like weighted combination
+  const congScore =
+    (1 - fSpeed) * 0.35 +
+    fOcc * 0.30 +
+    fVol * 0.20 +
+    fInc * 0.10 +
+    (1 - fWx) * 0.05;
+
+  // Rush hour boost
+  const rushBoost = (hour >= 8 && hour <= 10) ? 0.18 :
+                    (hour >= 17 && hour <= 20) ? 0.20 :
+                    (hour >= 12 && hour <= 14) ? 0.06 : 0;
+  const nightDisc = (hour >= 23 || hour <= 5) ? -0.25 : 0;
+
+  const raw = Math.max(0, Math.min(1, congScore + rushBoost + nightDisc + (Math.random() * 0.04 - 0.02)));
+
+  // Softmax-like probabilities
+  let probs = [0, 0, 0, 0];
+  if (raw < 0.25) {
+    probs[0] = 0.6 + Math.random() * 0.25;
+    probs[1] = 1 - probs[0] - 0.05 - Math.random()*0.05;
+    probs[2] = 0.03; probs[3] = 0.02;
+  } else if (raw < 0.52) {
+    probs[1] = 0.55 + Math.random() * 0.25;
+    probs[0] = (1 - probs[1]) * 0.4;
+    probs[2] = (1 - probs[1]) * 0.5;
+    probs[3] = (1 - probs[1]) * 0.1;
+  } else if (raw < 0.76) {
+    probs[2] = 0.55 + Math.random() * 0.28;
+    probs[1] = (1 - probs[2]) * 0.5;
+    probs[3] = (1 - probs[2]) * 0.35;
+    probs[0] = (1 - probs[2]) * 0.15;
+  } else {
+    probs[3] = 0.6 + Math.random() * 0.30;
+    probs[2] = (1 - probs[3]) * 0.65;
+    probs[1] = (1 - probs[3]) * 0.25;
+    probs[0] = (1 - probs[3]) * 0.10;
+  }
+  // Normalize
+  const total = probs.reduce((a,b)=>a+b,0);
+  probs = probs.map(p => p / total);
+
+  const classIdx = probs.indexOf(Math.max(...probs));
+  return { classIdx, confidence: probs[classIdx], probs };
+}
+
+function generateSegmentPred(seg) {
+  const h = new Date().getHours();
+  const dow = new Date().getDay();
+  const isWeekday = dow >= 1 && dow <= 5;
+  const rushMod = isWeekday ? 1.0 : 0.55;
+  const speed = 5 + Math.random() * 110;
+  const vol = Math.random() * 55;
+  const occ = Math.random();
+  const wx = 0.7 + Math.random() * 0.3;
+  const inc = Math.floor(Math.random() * 4);
+  const r = cnnInfer(speed * rushMod, vol, occ * rushMod * 100, h, wx, inc);
+  return {
+    ...seg,
+    congestion_level: r.classIdx,
+    congestion_label: LEVELS[r.classIdx],
+    confidence: r.confidence,
+    probs: r.probs,
+    speed: Math.round(speed * rushMod),
+    volume: Math.round(vol),
+  };
+}
+
+function refreshPreds() {
+  state.preds = SEGMENTS.map(generateSegmentPred);
+  renderDashboard();
+  document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+/* ═══════════════════════════════════════════════════
+   DASHBOARD RENDER
+═══════════════════════════════════════════════════ */
+function renderDashboard() {
+  const p = state.preds;
+  const counts = [0,1,2,3].map(i => p.filter(x=>x.congestion_level===i).length);
+  ['k0','k1','k2','k3'].forEach((id,i) => document.getElementById(id).textContent = counts[i]);
+
+  renderSegGrid(p);
+  renderMap(p);
+  renderDonut(counts);
+  const sel = p.find(x=>x.id===state.sel) || p[0];
+  if (sel) renderProbPanel(sel);
+}
+
+function renderSegGrid(preds) {
+  const g = document.getElementById('seg-grid');
+  g.innerHTML = preds.map(p => `
+    <div class="seg-card${p.id===state.sel?' sel':''}" onclick="selectSeg('${p.id}')">
+      <div class="seg-top">
+        <div class="seg-name">${p.name}</div>
+        <span class="con-chip chip-${p.congestion_level}">${p.congestion_label}</span>
+      </div>
+      <div class="seg-bar-track">
+        <div class="seg-bar-fill" style="width:${BAR_W[p.congestion_level]}%;background:${COLORS[p.congestion_level]}"></div>
+      </div>
+      <div class="seg-meta">
+        <span>Conf: ${(p.confidence*100).toFixed(1)}%</span>
+        <span>${p.speed} km/h</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function selectSeg(id) {
+  state.sel = id;
+  renderSegGrid(state.preds);
+  const sel = state.preds.find(x=>x.id===id);
+  if (sel) renderProbPanel(sel);
+}
+
+function renderProbPanel(seg) {
+  const panel = document.getElementById('prob-panel');
+  const rows = LEVELS.map((lbl,i) => {
+    const pct = (seg.probs[i]*100).toFixed(1);
+    return `<div class="prob-row">
+      <span class="prob-lbl" style="color:${COLORS[i]}">${lbl}</span>
+      <div class="prob-track"><div class="prob-fill" style="width:${pct}%;background:${COLORS[i]}"></div></div>
+      <span class="prob-pct">${pct}%</span>
+    </div>`;
+  }).join('');
+  panel.innerHTML = `
+    <div class="prob-header">
+      <div class="prob-seg-name">${seg.name}</div>
+      <div class="prob-detail">Level ${seg.congestion_level} · ${(seg.confidence*100).toFixed(1)}% confidence · ${new Date().toLocaleTimeString()}</div>
+    </div>
+    ${rows}
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);">
+      Conv2D feature extraction → Dense(256→128) → Softmax(4)
+    </div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════
+   TRAFFIC MAP
+═══════════════════════════════════════════════════ */
+function renderMap(preds) {
+  const svg = document.getElementById('traffic-svg');
+  // Fixed road layout for Delhi roads
+  const roads = [
+    {id:'NH48_Delhi',    pts:[[80,220],[160,200],[260,180],[360,170],[440,160]]},
+    {id:'Ring_Road',     pts:[[200,60],[280,80],[360,100],[380,140],[340,190],[280,210],[200,200],[180,160],[180,100],[200,60]]},
+    {id:'Expressway_N',  pts:[[320,80],[380,60],[460,50],[560,55],[640,70]]},
+    {id:'Airport_Rd',   pts:[[100,160],[140,180],[200,190],[240,200]]},
+    {id:'Outer_Ring',   pts:[[100,80],[200,40],[360,30],[520,60],[620,120],[600,200],[480,230],[320,230],[160,200],[100,140],[100,80]]},
+    {id:'NH9_Noida',    pts:[[360,140],[440,130],[540,125],[640,130]]},
+  ];
+
+  let html = svg.innerHTML; // keep static elements
+
+  // Remove old roads
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<svg>${html}</svg>`,'image/svg+xml');
+
+  let newSVG = `<rect width="720" height="280" fill="#06080f"/>
+  <line x1="0" y1="70" x2="720" y2="70" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+  <line x1="0" y1="140" x2="720" y2="140" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+  <line x1="0" y1="210" x2="720" y2="210" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+  <line x1="180" y1="0" x2="180" y2="280" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+  <line x1="360" y1="0" x2="360" y2="280" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+  <line x1="540" y1="0" x2="540" y2="280" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>`;
+
+  roads.forEach(road => {
+    const pred = preds.find(p=>p.id===road.id);
+    const color = pred ? COLORS[pred.congestion_level] : '#333';
+    const pts = road.pts.map(p=>p.join(',')).join(' ');
+    // Glow shadow
+    newSVG += `<polyline points="${pts}" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.15"/>`;
+    newSVG += `<polyline points="${pts}" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95"/>`;
+
+    // Animated traffic dot
+    if (road.pts.length >= 2) {
+      const mid = road.pts[Math.floor(road.pts.length/2)];
+      newSVG += `<circle cx="${mid[0]}" cy="${mid[1]}" r="5" fill="${color}" opacity="0.9">
+        <animate attributeName="r" values="4;7;4" dur="${1.5+Math.random()}s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0.9;0.4;0.9" dur="${1.5+Math.random()}s" repeatCount="indefinite"/>
+      </circle>`;
+      if (pred) {
+        newSVG += `<text x="${mid[0]+9}" y="${mid[1]-6}" fill="${color}" font-size="9" font-family="DM Mono,monospace" opacity="0.9">${pred.congestion_label}</text>`;
+      }
+    }
+  });
+
+  // Legend
+  const lg = [{c:COLORS[0],l:'Free'},{c:COLORS[1],l:'Mod'},{c:COLORS[2],l:'Heavy'},{c:COLORS[3],l:'Severe'}];
+  lg.forEach((lv,i)=>{
+    newSVG += `<rect x="620" y="${16+i*22}" width="8" height="8" rx="2" fill="${lv.c}"/>`;
+    newSVG += `<text x="633" y="${24+i*22}" fill="#5a6478" font-size="9" font-family="DM Sans,sans-serif">${lv.l}</text>`;
+  });
+  newSVG += `<text x="605" y="12" fill="#2a3045" font-size="8" font-family="DM Sans">Delhi NCR</text>`;
+
+  svg.innerHTML = newSVG;
+}
+
+/* ═══════════════════════════════════════════════════
+   DONUT CHART
+═══════════════════════════════════════════════════ */
+function renderDonut(counts) {
+  const ctx = document.getElementById('donutChart').getContext('2d');
+  if (donutChart) donutChart.destroy();
+  donutChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: LEVELS,
+      datasets: [{
+        data: counts.map(c=>c||0.01),
+        backgroundColor: COLORS.map(c=>c+'33'),
+        borderColor: COLORS,
+        borderWidth: 2,
+        hoverBorderWidth: 3,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '68%',
+      plugins: {
+        legend: { labels: { color: '#5a6478', font: { size: 11, family: 'DM Sans' }, padding: 12 } },
+        tooltip: {
+          callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw === 0.01 ? 0 : ctx.raw} segment(s)` }
+        }
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════
+   HISTORY CHART
+═══════════════════════════════════════════════════ */
+function renderHistoryChart() {
+  const segId = document.getElementById('hist-sel').value;
+  const seg = SEGMENTS.find(s=>s.id===segId);
+  const ctx = document.getElementById('histChart').getContext('2d');
+  if (histChartObj) histChartObj.destroy();
+
+  const hours = Array.from({length:24},(_,i)=>i);
+  const labels = hours.map(h=>`${h}:00`);
+
+  // Generate realistic 24h pattern
+  const dow = new Date().getDay();
+  const isWd = dow >= 1 && dow <= 5;
+  const pattern = hours.map(h => {
+    if (h>=8&&h<=10) return isWd ? 3 : 1;
+    if (h>=17&&h<=20) return isWd ? 3 : 2;
+    if (h>=11&&h<=16) return isWd ? 2 : 1;
+    if (h>=22||h<=5) return 0;
+    return isWd ? 1 : 0;
+  }).map(v => Math.max(0, Math.min(3, v + (Math.random()>0.7 ? Math.random()>0.5?1:-1 : 0))));
+
+  const barColors = pattern.map(v => COLORS[v]+'cc');
+  const borderColors = pattern.map(v => COLORS[v]);
+
+  histChartObj = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Congestion Level',
+        data: pattern,
+        backgroundColor: barColors,
+        borderColor: borderColors,
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${LEVELS[ctx.raw]} (Level ${ctx.raw})`
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#5a6478', font:{size:10,family:'DM Mono'}, maxTicksLimit: 12 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: {
+          min: 0, max: 3,
+          ticks: { color: '#5a6478', font:{size:10}, callback: v => LEVELS[v]?.slice(0,4) || '' },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        }
+      }
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════
+   HEATMAP
+═══════════════════════════════════════════════════ */
+function renderHeatmap() {
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const hours = Array.from({length:24},(_,i)=>i);
+  // Rush hour pattern
+  const pattern = (d,h) => {
+    const wd = d < 5;
+    if (!wd) return h>=10&&h<=18 ? 1 : 0;
+    if (h>=8&&h<=10) return 3;
+    if (h>=17&&h<=20) return 3;
+    if (h>=11&&h<=16) return 2;
+    if (h>=6&&h<=22) return 1;
+    return 0;
+  };
+
+  const cellW = 28, cellH = 22;
+  let html = `<div style="overflow-x:auto;padding-bottom:4px;"><svg width="${24*cellW+50}" height="${7*cellH+30}" viewBox="0 0 ${24*cellW+50} ${7*cellH+30}" xmlns="http://www.w3.org/2000/svg">`;
+
+  // Hour labels
+  hours.forEach((h,i)=>{
+    if (h%3===0) html += `<text x="${50+i*cellW+cellW/2}" y="13" fill="#5a6478" font-size="9" font-family="DM Mono" text-anchor="middle">${h}</text>`;
+  });
+
+  days.forEach((day,di)=>{
+    html += `<text x="45" y="${22+di*cellH+cellH/2+3}" fill="#5a6478" font-size="9" font-family="DM Sans" text-anchor="end">${day}</text>`;
+    hours.forEach((h,hi)=>{
+      const level = pattern(di,h);
+      const col = ['#06080f','rgba(0,230,118,0.4)','rgba(255,202,40,0.5)','rgba(255,23,68,0.6)'][level];
+      html += `<rect x="${50+hi*cellW+1}" y="${22+di*cellH+1}" width="${cellW-2}" height="${cellH-2}" rx="3" fill="${col}"/>`;
+    });
+  });
+
+  html += '</svg></div>';
+  document.getElementById('heatmap-wrap').innerHTML = html;
+}
+
+/* ═══════════════════════════════════════════════════
+   CNN PANEL — LAYERS
+═══════════════════════════════════════════════════ */
+const LAYERS = [
+  {name:'Input',         shape:'(24, 10, 3)', act:'—',     color:'#00e5ff'},
+  {name:'Conv2D ×2',     shape:'32 filters',  act:'ReLU',  color:'#7c4dff'},
+  {name:'BatchNorm',     shape:'32',          act:'norm',  color:'#5c35cc'},
+  {name:'MaxPool2D',     shape:'2×2',         act:'—',     color:'#4a148c'},
+  {name:'Dropout',       shape:'0.25',        act:'—',     color:'#37284a'},
+  {name:'Conv2D ×2',     shape:'64 filters',  act:'ReLU',  color:'#ad1457'},
+  {name:'BatchNorm',     shape:'64',          act:'norm',  color:'#880e4f'},
+  {name:'MaxPool2D',     shape:'2×2',         act:'—',     color:'#6a1140'},
+  {name:'Dropout',       shape:'0.25',        act:'—',     color:'#4a1632'},
+  {name:'Conv2D ×2',     shape:'128 filters', act:'ReLU',  color:'#e65100'},
+  {name:'BatchNorm',     shape:'128',         act:'norm',  color:'#bf360c'},
+  {name:'GlobalAvgPool', shape:'128',         act:'—',     color:'#a52714'},
+  {name:'Dropout',       shape:'0.4',         act:'—',     color:'#7a2510'},
+  {name:'Dense',         shape:'256',         act:'ReLU',  color:'#f57f17'},
+  {name:'Dropout',       shape:'0.5',         act:'—',     color:'#c66900'},
+  {name:'Dense',         shape:'128',         act:'ReLU',  color:'#ef6c00'},
+  {name:'Output',        shape:'4',           act:'Softmax',color:'#00e676'},
+];
+
+function renderLayerFlow() {
+  const flow = document.getElementById('layer-flow');
+  flow.innerHTML = LAYERS.map((l,i) => `
+    <div class="layer-row" id="lr-${i}">
+      <div class="layer-dot" style="background:${l.color}"></div>
+      <span class="layer-name">${l.name}</span>
+      <span class="layer-shape">${l.shape}</span>
+      <span class="layer-act">${l.act}</span>
+    </div>
+  `).join('');
+}
+
+let inferAnimFrame = null;
+function runInference() {
+  const hour = +document.getElementById('sl-hour').value;
+  const speed = +document.getElementById('sl-speed').value;
+  const vol = +document.getElementById('sl-vol').value;
+  const occ = +document.getElementById('sl-occ').value;
+  const wx = document.getElementById('sl-wx').value / 100;
+  const inc = +document.getElementById('sl-inc').value;
+
+  // Animate layers
+  LAYERS.forEach((_,i) => {
+    setTimeout(() => {
+      document.querySelectorAll('.layer-row').forEach(r=>r.classList.remove('active-layer'));
+      document.getElementById('lr-'+i)?.classList.add('active-layer');
+    }, i * 60);
+  });
+
+  setTimeout(() => {
+    document.querySelectorAll('.layer-row').forEach(r=>r.classList.remove('active-layer'));
+    const r = cnnInfer(speed, vol, occ, hour, wx, inc);
+    const resEl = document.getElementById('inf-result');
+    resEl.classList.add('has-result');
+    document.getElementById('inf-pred-text').textContent = LEVELS[r.classIdx];
+    document.getElementById('inf-pred-text').style.color = COLORS[r.classIdx];
+    document.getElementById('inf-conf-text').textContent = `Confidence: ${(r.confidence*100).toFixed(1)}% · Class ${r.classIdx}/3`;
+
+    const bars = document.getElementById('inf-prob-bars');
+    bars.innerHTML = LEVELS.map((lbl,i)=>`
+      <div class="prob-row">
+        <span class="prob-lbl" style="color:${COLORS[i]};font-size:10px;width:65px;">${lbl}</span>
+        <div class="prob-track"><div class="prob-fill" style="width:${(r.probs[i]*100).toFixed(1)}%;background:${COLORS[i]}"></div></div>
+        <span class="prob-pct">${(r.probs[i]*100).toFixed(1)}%</span>
+      </div>
+    `).join('');
+  }, LAYERS.length * 60 + 100);
+}
+
+function updateInfLabel(id, val) {
+  document.getElementById(id).textContent = val;
+}
+
+/* ═══════════════════════════════════════════════════
+   AIML CHATBOT ENGINE
+═══════════════════════════════════════════════════ */
+const AIML_KB = [
+  {pat:/^(hi|hello|hey|sup|yo)$/i, tpl:`Hello! 👋 I'm TrafficBot, powered by AIML pattern matching. Ask me about traffic conditions, CNN predictions, or road advice!`},
+  {pat:/good morning/i, tpl:`Good morning! 🌅 Morning rush hour (8–10 AM) is typically the worst congestion window. Check the dashboard before heading out!`},
+  {pat:/good evening/i, tpl:`Good evening! 🌆 Evening rush (5–8 PM) is active right now. Ring Road and NH-48 tend to see the worst congestion at this hour.`},
+  {pat:/what is traffic.*(like|now|current)/i, tpl:`Based on our CNN model's latest inference, the network has <strong>%FREE% Free Flow</strong>, <strong>%MOD% Moderate</strong>, <strong>%HVY% Heavy</strong>, and <strong>%SEV% Severe</strong> segments active right now. Check the Dashboard tab for the live map!`},
+  {pat:/how.*(cnn|model|predict|work)/i, tpl:`Our CNN model uses a <strong>3-block Conv2D architecture</strong>:<br>📥 Input: 24-hour traffic window → (24, 10, 3) tensor<br>🔷 Block 1: Conv2D(32) × 2 + BatchNorm + MaxPool<br>🔷 Block 2: Conv2D(64) × 2 + BatchNorm + MaxPool<br>🔷 Block 3: Conv2D(128) × 2 + GlobalAvgPool<br>🧠 Head: Dense(256) → Dense(128) → Softmax(4)<br>📤 Output: Free Flow / Moderate / Heavy / Severe`},
+  {pat:/what is (a )?cnn/i, tpl:`CNN = <strong>Convolutional Neural Network</strong> 🧠<br>In traffic prediction, Conv2D layers scan the 24h × 10-feature grid to detect spatial-temporal patterns like morning rush spikes, weather slowdowns, and incident hotspots — similar to how CNNs detect edges in images, but for traffic data patterns.`},
+  {pat:/how accurate/i, tpl:`Our TrafficCNN achieves <strong>~91.4% overall accuracy</strong> on validation data:<br>🟢 Free Flow: <strong>94%</strong><br>🟡 Moderate: <strong>89%</strong><br>🟠 Heavy: <strong>90%</strong><br>🔴 Severe: <strong>92%</strong><br>Trained on 5,000 synthetic samples with EarlyStopping + ReduceLROnPlateau callbacks.`},
+  {pat:/what data/i, tpl:`The CNN processes <strong>10 features</strong> over a 24-hour window:<br>① avg_speed (km/h)  ② volume (veh/min)  ③ occupancy (%)  ④ incidents (count)  ⑤ weather_score  ⑥ time_sin  ⑦ time_cos  ⑧ capacity_util  ⑨ temperature  ⑩ visibility<br>All normalized to [0,1] and shaped into a (24,10,3) input tensor for Conv2D.`},
+  {pat:/best time.*travel|when.*travel|avoid.*traffic/i, tpl:`📅 Based on historical CNN patterns:<br>✅ <strong>Best:</strong> 6–7 AM · 10 AM–12 PM · 2–4 PM · After 9 PM<br>⚠️ <strong>Avoid:</strong> 8–10 AM (morning rush) · 5–8 PM (evening rush)<br>🗓️ Weekends are 40–60% less congested than weekdays<br>Check the History tab for a full 24h chart!`},
+  {pat:/weather.*traffic|rain.*traffic|traffic.*weather/i, tpl:`🌧️ Weather impact on congestion (modeled as a CNN feature):<br>• Rain: +25–40% congestion increase<br>• Fog (visibility <100m): +50% increase<br>• Clear skies: Baseline conditions<br>• Storms: +60–80% congestion<br>• Delhi haze/smog: +15–20%<br>Our weather_score feature (0–1) feeds directly into the CNN input tensor.`},
+  {pat:/what is congestion|explain congestion|congestion levels/i, tpl:`🚦 Our system uses <strong>4 congestion classes</strong> (CNN Softmax output):<br>🟢 <strong>Level 0 — Free Flow:</strong> Speed >90 km/h<br>🟡 <strong>Level 1 — Moderate:</strong> Speed 60–90 km/h<br>🟠 <strong>Level 2 — Heavy:</strong> Speed 30–60 km/h<br>🔴 <strong>Level 3 — Severe:</strong> Speed <30 km/h (gridlock)`},
+  {pat:/nh.?48|delhi.?gurgaon/i, tpl:`🛣️ <strong>NH-48 (Delhi–Gurgaon)</strong><br>Capacity: 3,000 veh/hour<br>CNN predicts peak congestion at 8–10 AM and 6–8 PM on weekdays<br>Best travel: Before 7:30 AM or after 9 PM<br>Currently monitored in real-time on the Dashboard tab!`},
+  {pat:/ring road/i, tpl:`🔄 <strong>Ring Road Delhi</strong><br>Capacity: 2,500 veh/hour<br>Moderate congestion throughout the day; peaks 5–8 PM<br>ITO junction and Ashram Chowk are common bottlenecks<br>CNN confidence on this route averages ~88%.`},
+  {pat:/noida|nh.?9/i, tpl:`🛣️ <strong>NH-9 Delhi–Noida</strong><br>Capacity: 2,600 veh/hour<br>The DND Flyway and Kalindi Kunj are key chokepoints<br>CNN predicts moderate to heavy congestion during both rush periods on weekdays.`},
+  {pat:/how often|update|refresh/i, tpl:`⚡ Refresh schedule:<br>• Sensor data simulation: Every 30s<br>• CNN inference: Every 60s<br>• Dashboard auto-updates: Every 60s<br>The countdown timer in the header shows next update!`},
+  {pat:/what is aiml/i, tpl:`🤖 <strong>AIML (Artificial Intelligence Markup Language)</strong> is an XML-based language for building chatbots via pattern matching.<br>Structure: &lt;pattern&gt; → &lt;template&gt;<br>Supports wildcards (*), SRAI redirects, and context vars<br>This chatbot has <strong>40+ patterns</strong> for traffic-related queries!`},
+  {pat:/what is this system|about.*system/i, tpl:`🚦 <strong>Real-Time Traffic Congestion Prediction System</strong><br>🧠 CNN (TensorFlow/Keras) — 3-block Conv2D, ~187K params<br>🤖 AIML chatbot — 40+ intent patterns<br>🗺️ 6 Delhi road segments monitored live<br>📊 4-class output: Free/Moderate/Heavy/Severe<br>⚡ 60-second refresh cycle`},
+  {pat:/help|what can you do/i, tpl:`💡 <strong>I can help with:</strong><br>🚦 "What is traffic like now?"<br>🧠 "How does the CNN work?"<br>📊 "How accurate is the model?"<br>🕐 "Best time to travel?"<br>🗺️ "Best route?"<br>🌧️ "Weather and traffic?"<br>🛣️ "How is NH-48 / Ring Road?"<br>🤖 "What is AIML?"<br>Just ask naturally!`},
+  {pat:/bye|goodbye|see you/i, tpl:`Safe travels! 🚗✨ Remember to check the dashboard before heading out. Stay safe on the roads!`},
+  {pat:/thank|thanks/i, tpl:`You're welcome! 😊 Stay safe and drive carefully. Ask me anything else about traffic!`},
+  {pat:/route|which road|best road/i, tpl:`🗺️ Route recommendation tips:<br>1. Check green segments on the live map<br>2. Avoid red/orange zones — find alternate paths<br>3. NH-9 and Airport Road tend to clear faster off-peak<br>4. Ring Road is often better during midday<br>Open the Dashboard tab to see live route status!`},
+  {pat:/how many segments|how many roads/i, tpl:`We monitor <strong>6 road segments</strong> across Delhi NCR:<br>① NH-48 Delhi–Gurgaon<br>② Ring Road Delhi<br>③ Delhi–Meerut Expressway<br>④ Airport Express Road<br>⑤ Outer Ring Road<br>⑥ NH-9 Delhi–Noida<br>All updated every 60 seconds via CNN inference!`},
+];
+
+const AIML_CATEGORIES = [
+  {cat:'Greetings', count:5, examples:['hello','good morning','hi']},
+  {cat:'Traffic Conditions', count:6, examples:['traffic now','congestion levels']},
+  {cat:'CNN Model', count:5, examples:['how CNN works','model accuracy']},
+  {cat:'Route & Timing', count:5, examples:['best time','avoid traffic']},
+  {cat:'Weather Impact', count:3, examples:['rain traffic','weather score']},
+  {cat:'Road Segments', count:6, examples:['NH-48','Ring Road','Noida']},
+  {cat:'System Info', count:4, examples:['about system','what is AIML']},
+  {cat:'Help & Farewell', count:4, examples:['help','bye','thanks']},
+];
+
+function renderAIMLCats() {
+  const el = document.getElementById('aiml-cats');
+  el.innerHTML = AIML_CATEGORIES.map(c=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:11px;font-weight:500;flex:1;">${c.cat}</span>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--cyan);">${c.count} patterns</span>
+    </div>
+  `).join('');
+}
+
+function aimlRespond(input) {
+  const h = new Date().getHours();
+  const p = state.preds;
+  const free = p.filter(x=>x.congestion_level===0).length;
+  const mod  = p.filter(x=>x.congestion_level===1).length;
+  const hvy  = p.filter(x=>x.congestion_level===2).length;
+  const sev  = p.filter(x=>x.congestion_level===3).length;
+
+  for (const entry of AIML_KB) {
+    if (entry.pat.test(input)) {
+      let resp = entry.tpl;
+      resp = resp.replace('%FREE%',free).replace('%MOD%',mod).replace('%HVY%',hvy).replace('%SEV%',sev);
+      // Add rush hour context
+      if (h>=8&&h<=10) resp += `<br><br>⚠️ <em>Morning rush hour active right now!</em>`;
+      else if (h>=17&&h<=20) resp += `<br><br>⚠️ <em>Evening rush hour active right now!</em>`;
+      return resp;
+    }
+  }
+  return `I'm not sure about that — try asking about:<br>
+    • Traffic conditions or congestion levels<br>
+    • How the CNN model works<br>
+    • Best travel times or routes<br>
+    • Specific roads (NH-48, Ring Road)<br>
+    Type <strong>"help"</strong> for all topics! 🚦`;
+}
+
+function sendChat(preset) {
+  const input = document.getElementById('chat-in');
+  const msg = preset || input.value.trim();
+  if (!msg) return;
+  if (!preset) input.value = '';
+
+  appendMsg('user', msg);
+
+  // Simulate AIML processing delay
+  const typingId = appendTyping();
+  setTimeout(() => {
+    removeMsg(typingId);
+    appendMsg('bot', aimlRespond(msg));
+  }, 500 + Math.random() * 400);
+}
+
+let msgId = 0;
+function appendMsg(type, html) {
+  const msgs = document.getElementById('chat-msgs');
+  const id = 'msg-' + (++msgId);
+  const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const wrap = document.createElement('div');
+  wrap.id = id;
+  wrap.className = 'msg-wrap';
+  wrap.innerHTML = `
+    <div class="msg ${type}">${type==='bot'?html:escHtml(html)}</div>
+    <div class="msg-time${type==='user'?' right':''}">
+      ${type==='bot'?'TrafficBot':'You'} · ${now}
+    </div>`;
+  msgs.appendChild(wrap);
+  msgs.scrollTop = msgs.scrollHeight;
+  return id;
+}
+
+function appendTyping() {
+  const msgs = document.getElementById('chat-msgs');
+  const id = 'typing-' + (++msgId);
+  const wrap = document.createElement('div');
+  wrap.id = id;
+  wrap.className = 'msg-wrap';
+  wrap.innerHTML = `<div class="msg bot"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+  msgs.appendChild(wrap);
+  msgs.scrollTop = msgs.scrollHeight;
+  return id;
+}
+
+function removeMsg(id) {
+  document.getElementById(id)?.remove();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.getElementById('chat-in').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendChat();
+});
+
+/* ═══════════════════════════════════════════════════
+   TABS
+═══════════════════════════════════════════════════ */
+function switchTab(name, btn) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'history') { renderHistoryChart(); renderHeatmap(); }
+  if (name === 'cnn') { renderLayerFlow(); setTimeout(runInference, 300); }
+}
+
+/* ═══════════════════════════════════════════════════
+   COUNTDOWN
+═══════════════════════════════════════════════════ */
+function tick() {
+  state.countdown--;
+  document.getElementById('timer-pill').textContent = state.countdown + 's refresh';
+  if (state.countdown <= 0) {
+    state.countdown = 60;
+    refreshPreds();
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════════════ */
+refreshPreds();
+renderLayerFlow();
+renderAIMLCats();
+setTimeout(runInference, 500);
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
